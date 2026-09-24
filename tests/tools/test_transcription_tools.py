@@ -273,6 +273,7 @@ class TestTranscribeLocalCommand:
                 return ""
 
         class Proc:
+            pid = os.getpid()
             returncode = 0
             stdout = _Stream()
             stderr = _Stream()
