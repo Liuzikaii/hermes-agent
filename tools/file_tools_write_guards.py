@@ -22,7 +22,7 @@ from tools.binary_extensions import (
     is_pdf_path,
     is_sqlite_sidecar,
 )
-from tools.file_tools_paths import _expand_tilde, _resolve_path_for_task
+from tools.file_tools_paths import _expand_tilde, _resolve_path_for_task, _terminal_env_type_for_task
 from tools.file_tools_read_tracking import _has_full_write_baseline, _read_mtime_drifted
 
 # Prefixes matched after realpath. macOS: /private/var mirrors /var — block the
@@ -457,28 +457,44 @@ def _check_binary_document_write(filepath: str, task_id: str = "default") -> str
     # syntax is text-authorable and text fixtures named ``*.db`` exist.
     pdf = is_pdf_path(filepath)
     if pdf or has_binary_extension(filepath):
+        remote = _terminal_env_type_for_task(task_id) != "local"
         try:
-            resolved = Path(_resolve_path_for_task(filepath, task_id))
+            resolved = str(_resolve_path_for_task(filepath, task_id))
         except Exception:
-            resolved = Path(_expand_tilde(filepath))
-        try:
-            if resolved.is_file():
-                if pdf:
-                    return (
-                        f"Refusing to overwrite existing PDF '{filepath}' with plain text. "
-                        "read_file showed you EXTRACTED text, not the real bytes — writing "
-                        "text back would destroy the document. Use the pdf skill or a PDF "
-                        "library via the terminal to modify it. (Creating a NEW .pdf file "
-                        "is allowed.)")
+            resolved = filepath if remote else _expand_tilde(filepath)
+        if remote:
+            # Existence on the controller says nothing about the target. Reuse
+            # the backend probe, including its missing-vs-unavailable distinction.
+            from tools.file_tools import _get_file_ops
+
+            try:
+                file_ops = _get_file_ops(task_id)
+                _, status = file_ops._probe_regular_file(file_ops._expand_path(resolved))
+            except Exception:
+                return f"Cannot check binary overwrite safety for '{filepath}': terminal environment unavailable. Retry shortly."
+            if status not in ("ok", "bad_size", "missing", "not_regular"):
+                return file_ops._env_unavailable_error(filepath, status).error
+            exists = status in ("ok", "bad_size")
+        else:
+            try:
+                exists = Path(resolved).is_file()
+            except OSError:
+                exists = False
+        if exists:
+            if pdf:
                 return (
-                    f"Refusing to overwrite existing binary file '{filepath}' ({ext}) "
-                    "with plain text — read_file showed you extracted or mojibake "
-                    "text, not the real bytes, and writing text back would destroy "
-                    "the file. Use a binary-aware tool via the terminal to modify it "
-                    "(for SQLite databases, the sqlite3 CLI or a SQLite library). "
-                    "(Creating a NEW file with this extension is allowed.)")
-        except OSError:
-            pass
+                    f"Refusing to overwrite existing PDF '{filepath}' with plain text. "
+                    "read_file showed you EXTRACTED text, not the real bytes — writing "
+                    "text back would destroy the document. Use the pdf skill or a PDF "
+                    "library via the terminal to modify it. (Creating a NEW .pdf file "
+                    "is allowed.)")
+            return (
+                f"Refusing to overwrite existing binary file '{filepath}' ({ext}) "
+                "with plain text — read_file showed you extracted or mojibake "
+                "text, not the real bytes, and writing text back would destroy "
+                "the file. Use a binary-aware tool via the terminal to modify it "
+                "(for SQLite databases, the sqlite3 CLI or a SQLite library). "
+                "(Creating a NEW file with this extension is allowed.)")
     return None
 
 
