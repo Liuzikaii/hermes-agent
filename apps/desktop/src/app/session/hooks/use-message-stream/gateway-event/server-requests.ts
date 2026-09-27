@@ -398,7 +398,7 @@ const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
         clearInterval(watch)
       }
 
-      releasePreviewTyping(request.id)
+      releasePreviewTyping(request.id, signal)
     })
 }
 
